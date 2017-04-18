@@ -1,9 +1,6 @@
-int OT_IN_PIN = 19;
-int OT_OUT_PIN = 18;
-
-byte req_idx = 0;
-int state = 0;
-unsigned long time_stamp;
+const int OT_IN_PIN = 19; //3 //Arduino UNO
+const int OT_OUT_PIN = 18; //2 //Arduino UNO
+const unsigned int bitPeriod = 1000; //1020 //microseconds, 1ms -10%+15%
 
 //P MGS-TYPE SPARE DATA-ID  DATA-VALUE
 //0 000      0000  00000000 00000000 00000000
@@ -22,14 +19,14 @@ void setActiveState() {
 }
 
 void activateBoiler() {
-  setIdleState(); 
-  delay(1000);  
+  setIdleState();
+  delay(1000);
 }
 
 void sendBit(bool high) {
-  if (high) setActiveState(); else setIdleState();  
+  if (high) setActiveState(); else setIdleState();
   delayMicroseconds(500);
-  if (high) setIdleState(); else setActiveState();  
+  if (high) setIdleState(); else setActiveState();
   delayMicroseconds(500);
 }
 
@@ -43,65 +40,68 @@ void sendFrame(unsigned long request) {
 }
 
 void printBinary(unsigned long val) {
-  for (int i = 31; i >= 0; i--) {  
+  for (int i = 31; i >= 0; i--) {
     Serial.print(bitRead(val, i));
-  }  
+  }
 }
 
-void sendRequest(unsigned long request) {
-  Serial.println();  
+unsigned long sendRequest(unsigned long request) {
+  Serial.println();
   Serial.print("Request:  ");
   printBinary(request);
   Serial.print(" / ");
   Serial.print(request, HEX);
   Serial.println();
   sendFrame(request);
-  time_stamp = millis();
-  state = 1;  
+
+  if (!waitForResponse()) return 0;
+
+  return readResponse();
 }
 
-void waitForResponse() {  
-  if (digitalRead(OT_IN_PIN) == HIGH) { //start bit
-    delayMicroseconds(1250);
-    state = 2;      
-  } else if (millis() - time_stamp >= 1000) {
-    Serial.println("Response timeout");  
-    state = 0;
-  }  
+bool waitForResponse() {
+  unsigned long time_stamp = micros();
+  while (digitalRead(OT_IN_PIN) != HIGH) { //start bit
+    if (micros() - time_stamp >= 1000000) {
+      Serial.println("Response timeout");
+      return false;
+    }
+  }
+  delayMicroseconds(bitPeriod * 1.25); //wait for first bit
+  return true;
 }
 
-void readResponse() {
-  unsigned long response = 0;  
+unsigned long readResponse() {
+  unsigned long response = 0;
   for (int i = 0; i < 32; i++) {
     response = (response << 1) | digitalRead(OT_IN_PIN);
-    delayMicroseconds(1005); //1ms -10%+15%
+    delayMicroseconds(bitPeriod);
   }
   Serial.print("Response: ");
   printBinary(response);
   Serial.print(" / ");
   Serial.print(response, HEX);
-  Serial.println();  
+  Serial.println();
 
   if ((response >> 16 & 0xFF) == 25) {
     Serial.print("t=");
     Serial.print(response >> 8 & 0xFF);
     Serial.println("");
   }
-  state = 0;  
+  return response;
 }
 
 void setup() {
   pinMode(OT_IN_PIN, INPUT);
   pinMode(OT_OUT_PIN, OUTPUT);
   Serial.begin(115200);
-  Serial.println("Start");     
-  activateBoiler(); 
+  Serial.println("Start");
+  activateBoiler();
 }
 
 void loop() {
-  switch(state){
-    case 0: sendRequest(requests[req_idx]); break;
-    case 1: waitForResponse(); break;
-    case 2: readResponse(); req_idx++; if (req_idx >=sizeof(requests)/sizeof(unsigned long)) { req_idx = 0; } delay(950); break;
+  for (int index = 0; index < (sizeof(requests) / sizeof(unsigned long)); index++) {
+    sendRequest(requests[index]);
+    delay(950);
   }
 }
